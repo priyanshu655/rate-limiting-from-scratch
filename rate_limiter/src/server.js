@@ -1,44 +1,70 @@
 import express from "express";
 import "dotenv/config";
-import {rateLimiter} from "./middleware/rateLimiter.js"
-import { buckets } from "./middleware/rateLimiter.js";
-import metrics from "./bucketStore.js";
-import "./cleanupJob.js"
-const app=express();
+import redisClient from "./redis/redis.js";
+import redisRateLimiter from "./middleware/redisRateLimiter.js";
 
-const PORT=8080;
+const app = express();
 
-app.get("/api/data",rateLimiter,(req,res)=>{
-    res.json({
-    success:true
-    })
+const PORT = process.env.PORT || 8080;
+
+app.use(express.json());
+
+app.get("/api/data", redisRateLimiter, (req, res) => {
+  res.json({
+    success: true,
+    message: "Request allowed",
+  });
+});
+
+app.get("/metrics", async (req, res) => {
+  const allowed = await redisClient.get("metrics:allowed");
+
+  const blocked = await redisClient.get("metrics:blocked");
+
+  res.json({
+    allowed: Number(allowed || 0),
+
+    blocked: Number(blocked || 0),
+  });
+});
+
+app.get("/", (req, res) => {
+  res.json({
+    service: "Redis Token Bucket Rate Limiter",
+    status: "running",
+  });
+});
+
+app.get("/my-limits",async (req,res)=>{
+     const planName =
+            req.headers["x-plan"] ||
+            "basic";
+     const key =
+    req.headers["x-api-key"]
+    || `${req.ip}:${planName}`;
+
+        const redisKey =
+            `bucket:${key}`;
+
+            let bucket =
+    await redisClient.get(redisKey);
+
+    if (!bucket) {
+    return res.status(404).json({
+        error: "Bucket not found"
+    });
+}
+bucket = JSON.parse(bucket);
+res.json({
+    plan: planName,
+    capacity: bucket.capacity,
+    remaining: bucket.tokens,
+    refillRate: bucket.refillRate,
+    lastRefillTime:
+        bucket.lastRefillTime
+});
 })
-app.get("/debug",(req,res)=>{
 
-    const data = [];
-
-    buckets.forEach(
-        (bucket,ip)=>{
-            data.push({
-                ip,
-                tokens:bucket.tokens
-            });
-        }
-    );
-
-    res.json(data);
-});
-
-app.get("/metrics",(req,res)=>{
-    res.json({
-        allowed:metrics.allowed,
-        blocked:metrics.blocked,
-        activeBuckets:buckets.size
-    })
-});
-
-
-
-app.listen(PORT,()=>{
-    console.log(`App is listening on port ${PORT}`);
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
 });

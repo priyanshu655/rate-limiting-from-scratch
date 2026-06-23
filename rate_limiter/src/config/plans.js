@@ -1,5 +1,5 @@
 const plans={
-    free:{
+    basic:{
         capacity:5,
         refillRate:1
     },
